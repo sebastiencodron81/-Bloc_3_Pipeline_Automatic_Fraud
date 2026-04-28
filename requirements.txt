@@ -1,0 +1,33 @@
+pandas>=2.0
+numpy>=1.24
+requests>=2.31
+
+# API simulator
+fastapi>=0.110
+uvicorn>=0.27
+
+# ML
+scikit-learn>=1.4
+joblib>=1.3
+matplotlib>=3.8
+seaborn>=0.13
+
+# Validation
+pydantic>=2.5
+
+# Kafka
+kafka-python>=2.0
+
+# Database
+sqlalchemy>=2.0
+psycopg2-binary>=2.9
+
+# MLflow (optionnel)
+mlflow>=2.13
+
+# Dashboard
+streamlit>=1.32
+
+# Notebook
+jupyter>=1.0
+ipykernel>=6.29

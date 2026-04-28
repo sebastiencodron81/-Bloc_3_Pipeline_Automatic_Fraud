@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+*.egg-info/
+.venv/
+venv/
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Données et artefacts
+fraudTest.csv
+model.pkl
+api_sample.json
+api_report.md
+reports/
+mlruns/
+
+# Secrets
+.env
+
+# Docker volumes (en local)
+pg-data/
+minio-data/
+
+# OS
+.DS_Store
+Thumbs.db
