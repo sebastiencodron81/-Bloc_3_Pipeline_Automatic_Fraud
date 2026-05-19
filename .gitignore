@@ -25,6 +25,12 @@ mlruns/
 pg-data/
 minio-data/
 
+# Notes privées (ne JAMAIS pousser sur GitHub)
+_PRIVATE_/
+LIVRABLES_JURY/
+
 # OS
 .DS_Store
 Thumbs.db
+
+don't commit/

@@ -1,23 +1,4 @@
-"""
-consumer_predictor.py
-=====================
-Consumer Kafka qui lit raw-transactions, predit, et republie dans
-fraud-predictions.
-
-Sequence pour chaque message :
-  1. Parse le JSON
-  2. Cree un DataFrame d'une ligne avec les colonnes brutes attendues
-  3. Le pipeline scikit-learn applique feature engineering + preprocessing
-     + prediction (le tout serialise dans model.pkl)
-  4. Construit ScoredTransaction et publie dans fraud-predictions
-  5. Commit l'offset Kafka uniquement si succes (idempotence)
-
-Usage :
-  python consumer_predictor.py
-
-Variables d'environnement :
-  KAFKA_BOOTSTRAP, MODEL_PATH, TOPIC_RAW, TOPIC_PREDICTIONS, GROUP_ID
-"""
+"""Consumer Kafka : lit raw-transactions, score le modele, publie fraud-predictions."""
 
 from __future__ import annotations
 
@@ -34,10 +15,6 @@ from features import FraudFeatureBuilder  # noqa: F401  (necessaire pour unpickl
 from schemas import ScoredTransaction
 
 
-# ----------------------------------------------------------------------
-# CONFIG
-# ----------------------------------------------------------------------
-
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "localhost:9092")
 MODEL_PATH = os.getenv("MODEL_PATH", "model.pkl")
 TOPIC_RAW = os.getenv("TOPIC_RAW", "raw-transactions")
@@ -52,48 +29,45 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
-# ----------------------------------------------------------------------
-# COLONNES ATTENDUES PAR LE PIPELINE
-# ----------------------------------------------------------------------
-
 REQUIRED = [
-    "trans_date_trans_time", "dob", "amt", "category", "gender",
-    "city_pop", "job", "state", "lat", "long", "merch_lat", "merch_long",
+    "trans_date_trans_time",
+    "dob",
+    "amt",
+    "category",
+    "gender",
+    "city_pop",
+    "job",
+    "state",
+    "lat",
+    "long",
+    "merch_lat",
+    "merch_long",
 ]
 
-
-# ----------------------------------------------------------------------
-# UTIL
-# ----------------------------------------------------------------------
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
 def predict_one(model, payload: dict) -> tuple[int, float]:
-    """Lance le pipeline sur un dict, retourne (is_fraud, score)."""
     df = pd.DataFrame([{k: payload[k] for k in REQUIRED}])
     pred = int(model.predict(df)[0])
     score = float(model.predict_proba(df)[0, 1])
     return pred, score
 
 
-# ----------------------------------------------------------------------
-# MAIN
-# ----------------------------------------------------------------------
-
 def main() -> None:
-    log.info(f"Chargement du modele depuis {MODEL_PATH}...")
+    log.info(f"Chargement modele : {MODEL_PATH}")
     model = joblib.load(MODEL_PATH)
     log.info("Modele charge.")
 
-    log.info(f"Connexion Kafka {KAFKA_BOOTSTRAP} (consumer={GROUP_ID}, producer)")
+    log.info(f"Connexion Kafka {KAFKA_BOOTSTRAP} (group={GROUP_ID})")
     consumer = KafkaConsumer(
         TOPIC_RAW,
         bootstrap_servers=KAFKA_BOOTSTRAP.split(","),
         group_id=GROUP_ID,
         auto_offset_reset="earliest",
-        enable_auto_commit=False,                                  # commit manuel apres succes
+        enable_auto_commit=False,
         value_deserializer=lambda v: json.loads(v.decode("utf-8")),
     )
     producer = KafkaProducer(
@@ -113,8 +87,9 @@ def main() -> None:
             try:
                 is_fraud, score = predict_one(model, payload)
             except Exception as e:
-                log.error(f"Erreur prediction sur trans_num={payload.get('trans_num')} : {e}")
-                # On NE commit PAS l'offset pour pouvoir rejouer plus tard
+                log.error(
+                    f"Erreur prediction trans_num={payload.get('trans_num')} : {e}"
+                )
                 continue
 
             scored = ScoredTransaction(
@@ -128,22 +103,19 @@ def main() -> None:
                 city=payload["city"],
                 is_fraud=is_fraud,
                 score=score,
+                ground_truth=payload.get("ground_truth"),
                 predicted_at=now_iso(),
             )
 
-            producer.send(
-                TOPIC_PRED,
-                key=scored.trans_num,
-                value=scored.model_dump(),
-            )
-            consumer.commit()                                      # commit apres publication
+            producer.send(TOPIC_PRED, key=scored.trans_num, value=scored.model_dump())
+            consumer.commit()
 
             n_processed += 1
             if is_fraud:
                 n_fraud += 1
                 log.warning(
-                    f"FRAUDE detectee | trans={scored.trans_num} | "
-                    f"amt={scored.amt} | score={score:.3f}"
+                    f"FRAUDE | trans={scored.trans_num} | amt={scored.amt} | "
+                    f"score={score:.3f} | truth={scored.ground_truth}"
                 )
             if n_processed % 50 == 0:
                 log.info(f"Stats | total={n_processed} | fraudes={n_fraud}")

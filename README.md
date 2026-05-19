@@ -42,8 +42,8 @@ L'architecture s'articule autour de **3 zones** :
 ```
    SOURCE                    PROCESSING (Kafka)                 CONSUMPTION
    ──────                    ─────────────────                  ───────────
-   fake_api.py    ─►   producer  ─►  raw-transactions   ─►   storage   ─►  PostgreSQL
-   (replay CSV)        (Pydantic +     ─►  predictor                       (Gold table)
+   API HF Spaces  ─►   producer  ─►  raw-transactions   ─►   storage   ─►  PostgreSQL
+   (streaming)         (Pydantic +     ─►  predictor                       (Gold table)
                         SHA-256)        ─►  fraud-predictions  ─►  alerter   ─►  Webhook
                                         ─►  dlq-raw                          dashboard
                                             (quarantaine)                    Streamlit
@@ -56,7 +56,7 @@ L'architecture s'articule autour de **3 zones** :
 
 | Couche | Technologie | Rôle |
 |---|---|---|
-| **Source** | FastAPI | Simulateur de l'API temps réel (replay CSV) |
+| **Source** | API REST distante (Hugging Face Spaces) | Flux temps réel de paiements au format JSON |
 | **Bus de messages** | Apache Kafka 7.5 | Streaming + DLQ + replay via offsets |
 | **Validation** | Pydantic v2 | Schéma strict + coerce numbers to str |
 | **ML** | scikit-learn 1.4 | RandomForest balanced, pipeline reproductible |
@@ -104,7 +104,7 @@ docker compose logs -f
 | 📡 Kafka UI | http://localhost:8080 | — |
 | 🔬 MLflow | http://localhost:5000 | — |
 | 💾 MinIO Console | http://localhost:9001 | minio / miniominio |
-| 🌐 Fake API | http://localhost:8002 | — |
+| 🌐 API source | https://sdacelo-real-time-fraud-detection.hf.space | — (publique) |
 
 ---
 
@@ -140,7 +140,6 @@ fraud-detection-pipeline/
 ├── 🔧 features.py                                  Feature engineering partagé
 ├── 📐 schemas.py                                   Schémas Pydantic
 │
-├── 🌐 fake_api.py                                  Simulateur API temps réel
 ├── 🔍 inspect_api.py                               Inspecteur de schéma API/CSV
 │
 ├── ▶️  producer.py                                  Producer Kafka + DLQ

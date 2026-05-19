@@ -9,9 +9,7 @@
 
 ## 1. Contexte et constat de départ
 
-L'API d'origine (`real-time-payments-api.herokuapp.com`) **n'est plus opérationnelle** (Heroku a sunset son free tier en novembre 2022). Les données temps réel n'existent donc plus comme prévu par l'énoncé. La solution adoptée est le **replay streaming** : un service local rejoue le dataset `fraudTest.csv` ligne par ligne, exposé via HTTP, en respectant strictement le contrat de la vraie API (mêmes colonnes, sans `is_fraud`).
-
-C'est une pratique standard d'ingénierie data : les banques font tourner leurs pipelines sur des replays historiques pour les tests, et toute l'industrie utilise du **service stubbing** pour découpler dev et dépendances tierces. Le pipeline ne fait pas la différence et bascule sans modification de code le jour où une vraie source serait disponible.
+Le pipeline consomme une API REST hébergée sur **Hugging Face Spaces** (`sdacelo-real-time-fraud-detection.hf.space`) qui publie en continu des paiements bruts au format JSON Pandas split. Cette API rejoue un dataset historique (~555 000 transactions) à un rythme accéléré (~1 transaction toutes les 2-3 secondes), avec la vérité terrain (`is_fraud`) conservée dans la réponse à des fins de monitoring de la performance du modèle en production.
 
 ---
 
@@ -27,6 +25,17 @@ C'est une pratique standard d'ingénierie data : les banques font tourner leurs 
 ## 3. Architecture cible
 
 > 📊 **Schéma visuel haute résolution** : voir `architecture_diagram.svg` (ou ouvrir `architecture.html` dans un navigateur pour le plein écran). Le schéma ASCII ci-dessous reste pour les revues techniques rapides en terminal.
+
+### Nomenclature Médaillon (Bronze / Silver / Gold)
+
+L'architecture applique le **pattern Médaillon** popularisé par Databricks, avec trois couches de raffinement progressif :
+
+- **Bronze** : topic `raw-transactions` — paiements bruts validés par Pydantic, pseudonymisés (cc_num hashé), tels qu'ingérés depuis la source. Donnée immuable et rejouable.
+- **Silver** : topic `fraud-predictions` — paiements enrichis avec la prédiction du modèle ML, le score de probabilité et la vérité terrain. Donnée typée et structurée.
+- **Gold** : table `payments_gold` dans PostgreSQL — couche de service requêtable, optimisée pour la consommation (dashboard, rapport quotidien, calcul des métriques live).
+
+Cette nomenclature explicite garantit la traçabilité des transformations et facilite le partitionnement des responsabilités entre équipes.
+
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -46,7 +55,7 @@ C'est une pratique standard d'ingénierie data : les banques font tourner leurs 
    ┌───────────────────────────────────────────┼─────────────────────────┐
    │                          PIPELINE EN PRODUCTION                     │
    │                                           │                         │
-   │  fake_api.py (replay CSV via HTTP)        │                         │
+   │  API HF Spaces (paiements en continu)     │                         │
    │       │                                   │                         │
    │       ▼                                   ▼                         │
    │  producer.py ──► Kafka topic ──► consumer_predictor.py              │
@@ -154,16 +163,16 @@ Tous les composants tournent dans des conteneurs orchestrés par `docker-compose
 
 ### 5.2 Source temps réel
 
-**`fake_api.py`**
-- Charge `fraudTest.csv` en mémoire (auto-téléchargement si absent)
-- Expose `/current-transactions` qui renvoie n transactions au format Pandas split
-- Retire la colonne `is_fraud` pour respecter le contrat d'une vraie API
-- Endpoint `/health` pour le monitoring
+**API Hugging Face Spaces**
+- URL : `https://sdacelo-real-time-fraud-detection.hf.space/current-transactions`
+- Format : JSON Pandas split (`columns`, `index`, `data`)
+- Cadence : nouvelle transaction toutes les 2-3 secondes
+- Inclut `current_time` (timestamp Unix en millisecondes) et la vérité terrain `is_fraud`
 
 ### 5.3 Producer Kafka
 
 **`producer.py`**
-- Poll `fake_api.py` toutes les 12 secondes (paramétrable)
+- Poll l'API HF toutes les 3 secondes (paramétrable)
 - Valide le schéma reçu via Pydantic (rejette les champs manquants ou typés incorrectement)
 - **Pseudonymise `cc_num`** par hash SHA-256 (RGPD)
 - Publie dans le topic `raw-transactions` (clé = `trans_num` pour ordre garanti par client)
@@ -257,7 +266,16 @@ Job quotidien : compare `count(producer)` vs `count(payments_gold)` vs `count(dl
 - **Droit à l'oubli** : la table `payments_gold` ne contient que des `cc_num_hash`, pas de PII identifiantes
 - **Chiffrement** : TLS sur tous les flux Kafka (config production)
 
-### 7.2 Lineage et catalog
+### 7.2 PCI-DSS (sécurité des paiements)
+
+Le pipeline manipule des numéros de carte bancaire (PAN). Bien que la certification **PCI-DSS** s'applique aux organisations (et non aux projets pédagogiques individuels), l'architecture respecte les principes-clés du standard :
+
+- **Tokenisation irréversible** : le PAN est remplacé par un hash SHA-256 dès l'ingestion par le producer. C'est l'équivalent fonctionnel d'une tokenisation cryptographique non réversible, principe central de PCI-DSS pour minimiser la surface d'exposition.
+- **PAN jamais persisté en clair** : aucun stockage en base ni dans les logs n'expose le numéro de carte. Le PAN n'existe en clair que pendant quelques millisecondes dans le producer, le temps du hash.
+- **Périmètre PCI minimal** : seul un composant (le producer) manipule le PAN. Les consumers, Postgres, le dashboard et MLflow ne voient que le hash. Cela facilite l'auditabilité d'un éventuel audit PCI-DSS.
+- **Logging maîtrisé** : aucun log applicatif n'imprime le contenu des champs sensibles. Les logs Docker affichent `trans_num` (identifiant non sensible), `amt` et `score`, jamais `cc_num`.
+
+### 7.3 Lineage et catalog
 
 Fichier `lineage.yaml` versionné Git documente :
 - Chaque dataset (source, propriétaire, fréquence)
@@ -266,7 +284,7 @@ Fichier `lineage.yaml` versionné Git documente :
 
 Suffisant pour ce projet ; à industrialiser via DataHub si scale.
 
-### 7.3 Secrets
+### 7.4 Secrets
 
 Aucun credential en clair. Variables d'environnement via `.env` (gitignored) chargées par Docker Compose.
 
@@ -274,14 +292,40 @@ Aucun credential en clair. Variables d'environnement via `.env` (gitignored) cha
 
 ## 8. Stratégie de monitoring (compétence C4)
 
-| Quoi | Outil | Métrique |
+L'observabilité s'organise selon les **3 piliers reconnus** par l'industrie (framework formalisé notamment par Google SRE) : métriques, logs et traces.
+
+### 8.1 Métriques
+
+Données quantitatives agrégées sur la santé technique et métier du système.
+
+| Quoi | Outil | Indicateur |
 |---|---|---|
-| Lag des consumers | **Kafka UI** (Provectus) | Nb messages non traités par consumer group |
+| Lag des consumers | **Kafka UI** (Provectus) | Nb de messages non traités par consumer group |
 | Débit du producer | Logs producer + Kafka UI | Messages/sec |
 | Taux de fraude observé | Streamlit | % is_fraud=1 sur 1h, 24h |
+| Performance live du modèle | Streamlit | Precision, Recall, F1 calculés contre la vérité terrain |
 | Latence end-to-end | Logs avec timestamps | p50, p95, p99 |
-| Santé conteneurs | `docker-compose ps` + healthchecks | up/down |
-| Data drift | Notebook hebdo | comparaison distribution `amt`, `category` API vs CSV ref |
+| Santé conteneurs | `docker-compose ps` + healthchecks | up / down |
+
+### 8.2 Logs
+
+Données textuelles événementielles, datées, structurées par composant.
+
+- Centralisation actuelle via `docker compose logs -f` pour le diagnostic
+- Format standard : `[HH:MM:SS][composant] message`
+- Niveau INFO pour le suivi normal, WARNING pour les retries, ERROR pour les exceptions
+- Le premier rejet de validation est loggé en détail (`_DLQ_FIRST_LOGGED`) pour éviter le spam tout en gardant la traçabilité
+
+### 8.3 Traces (perspective)
+
+Le tracing distribué n'est pas implémenté dans le périmètre actuel. Identifié comme évolution prioritaire avec **OpenTelemetry** (instrumentation) + **Jaeger** ou **Tempo** (collecteur) — permettrait de suivre une transaction individuelle de l'ingestion jusqu'à sa persistance en passant par chaque composant, avec mesure de latence à chaque étape.
+
+### 8.4 Détection de dérive
+
+| Quoi | Outil |
+|---|---|
+| Data drift | Notebook hebdomadaire — comparaison distribution `amt`, `category` API vs CSV de référence |
+| Concept drift | Suivi de Precision/Recall live sur le dashboard. Une dégradation > 10% déclencherait un réentraînement (à automatiser via Evidently AI) |
 
 ---
 
@@ -302,7 +346,6 @@ Aucun credential en clair. Variables d'environnement via `.env` (gitignored) cha
 | Fichier | Rôle |
 |---|---|
 | `architecture.md` | Ce document |
-| `fake_api.py` | Simulateur de l'API temps réel (replay CSV) |
 | `inspect_api.py` | Inspecteur de schéma API ↔ CSV |
 | `notebook_eda_baseline.ipynb` | EDA + entraînement modèle baseline |
 | `producer.py` | Producer Kafka |

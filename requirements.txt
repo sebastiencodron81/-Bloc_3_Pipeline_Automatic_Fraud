@@ -2,10 +2,6 @@ pandas>=2.0
 numpy>=1.24
 requests>=2.31
 
-# API simulator
-fastapi>=0.110
-uvicorn>=0.27
-
 # ML
 scikit-learn>=1.4
 joblib>=1.3

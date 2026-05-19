@@ -1,12 +1,4 @@
-"""
-schemas.py
-==========
-Schemas Pydantic partages entre tous les composants du pipeline.
-
-Centraliser les schemas garantit que producer, consumers, et tests
-parlent tous le meme langage et que toute incompatibilite saute aux
-yeux a la moindre modification.
-"""
+"""Pydantic schemas partages par le producer et les consumers."""
 
 from __future__ import annotations
 
@@ -16,23 +8,11 @@ from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-# ----------------------------------------------------------------------
-# SCHEMA D'UNE TRANSACTION BRUTE (telle que fournie par l'API)
-# ----------------------------------------------------------------------
-
 class RawTransaction(BaseModel):
-    """
-    Schema d'une transaction telle que produite par fake_api.py
-    (et par la vraie API si elle revient un jour).
+    """Transaction brute telle que recue de l'API source."""
 
-    Note : coerce_numbers_to_str=True permet a Pydantic de caster
-    automatiquement les nombres en string (ex: cc_num que pandas
-    serialise en int) sans rejeter le message.
-    """
+    model_config = ConfigDict(coerce_numbers_to_str=True, extra="ignore")
 
-    model_config = ConfigDict(coerce_numbers_to_str=True)
-
-    trans_date_trans_time: str
     cc_num: str = Field(min_length=10, max_length=20)
     merchant: str
     category: str
@@ -50,29 +30,23 @@ class RawTransaction(BaseModel):
     job: str
     dob: str
     trans_num: str
-    unix_time: int
     merch_lat: float = Field(ge=-90, le=90)
     merch_long: float = Field(ge=-180, le=180)
+    current_time: int = Field(ge=0)
+    is_fraud: Optional[int] = Field(default=None, ge=0, le=1)
 
-    @field_validator("trans_date_trans_time", "dob")
+    @field_validator("dob")
     @classmethod
-    def parse_date(cls, v: str) -> str:
-        # Verifie que le format est parsable, mais on garde la string
-        datetime.fromisoformat(v.replace(" ", "T"))
+    def _parse_dob(cls, v: str) -> str:
+        datetime.fromisoformat(v)
         return v
 
 
-# ----------------------------------------------------------------------
-# SCHEMA D'UNE PREDICTION ENRICHIE (publiee dans fraud-predictions)
-# ----------------------------------------------------------------------
-
 class ScoredTransaction(BaseModel):
-    """
-    Transaction apres passage par le modele : meme contenu mais
-    avec is_fraud + score, et cc_num pseudonymise.
-    """
+    """Transaction enrichie de la prediction du modele."""
+
     trans_num: str
-    cc_num_hash: str             # SHA-256 de cc_num (RGPD)
+    cc_num_hash: str
     trans_date_trans_time: str
     merchant: str
     category: str
@@ -81,15 +55,13 @@ class ScoredTransaction(BaseModel):
     city: str
     is_fraud: int = Field(ge=0, le=1)
     score: float = Field(ge=0.0, le=1.0)
-    predicted_at: str            # ISO timestamp UTC
+    ground_truth: Optional[int] = Field(default=None, ge=0, le=1)
+    predicted_at: str
 
-
-# ----------------------------------------------------------------------
-# SCHEMA D'UN MESSAGE EN DLQ
-# ----------------------------------------------------------------------
 
 class DeadLetter(BaseModel):
-    """Message rejete avec le motif et le payload original."""
+    """Message rejete par la validation."""
+
     rejected_at: str
     error: str
     raw_payload: dict

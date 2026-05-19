@@ -1,17 +1,13 @@
 # ----------------------------------------------------------------------
-# Stack complete pour le pipeline de detection de fraude
+# Pipeline detection de fraude - Architecture Kappa
 #
 # Usage :
 #   docker compose up -d
-#   docker compose logs -f producer consumer-predictor
+#   docker compose logs -f
 #   docker compose down
 # ----------------------------------------------------------------------
 
 services:
-
-  # =====================================================================
-  # INFRASTRUCTURE
-  # =====================================================================
 
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
@@ -109,37 +105,16 @@ services:
                  --host 0.0.0.0
                  --port 5000"
 
-  # =====================================================================
-  # APPLICATION
-  # =====================================================================
-
-  fake-api:
-    build: .
-    command: python fake_api.py
-    ports:
-      - "8002:8000"        # 8002 cote hote (peu utilise), 8000 cote conteneur
-    environment:
-      HOST: 0.0.0.0
-    volumes:
-      - ./:/app
-
   producer:
     build: .
     command: python producer.py
     depends_on:
       kafka:
         condition: service_healthy
-      fake-api:
-        condition: service_started
     environment:
       KAFKA_BOOTSTRAP: kafka:29092
-      API_URL: http://fake-api:8000/current-transactions
-      # Mode demo : 30 messages toutes les 6s + 10% de fraudes oversamplees
-      # => ~3 fraudes detectables par minute pour la demo
-      # Pour revenir au mode normal : POLL_INTERVAL=12 BATCH_SIZE=5 FRAUD_RATE=0
-      POLL_INTERVAL: 6
-      BATCH_SIZE: 30
-      FRAUD_RATE: 0.1
+      API_URL: ${API_URL:-https://sdacelo-real-time-fraud-detection.hf.space/current-transactions}
+      POLL_INTERVAL: ${POLL_INTERVAL:-3}
     volumes:
       - ./:/app
     restart: unless-stopped
@@ -180,8 +155,8 @@ services:
         condition: service_healthy
     environment:
       KAFKA_BOOTSTRAP: kafka:29092
-      ALERT_BACKEND: webhook              # ou smtp si tu configures les SMTP_*
-      WEBHOOK_URL: ${WEBHOOK_URL:-}        # vide par defaut, set via .env
+      ALERT_BACKEND: ${ALERT_BACKEND:-webhook}
+      WEBHOOK_URL: ${WEBHOOK_URL:-}
     volumes:
       - ./:/app
     restart: unless-stopped

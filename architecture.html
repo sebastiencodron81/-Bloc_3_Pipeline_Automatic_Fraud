@@ -83,18 +83,18 @@
 
       <!-- ============= ZONE 1 : SOURCE (left) ============= -->
 
-      <!-- Fake API source -->
+      <!-- API source : Hugging Face Spaces -->
       <g filter="url(#soft)">
         <rect x="40" y="180" width="180" height="100" rx="10" fill="#fef3c7" stroke="#d97706" stroke-width="2"/>
-        <text x="130" y="208" text-anchor="middle" font-size="14" font-weight="700" fill="#92400e">fake_api.py</text>
-        <text x="130" y="228" text-anchor="middle" font-size="11" fill="#78350f">FastAPI - port 8002</text>
-        <text x="130" y="245" text-anchor="middle" font-size="11" fill="#78350f">replay du CSV</text>
-        <text x="130" y="262" text-anchor="middle" font-size="11" font-style="italic" fill="#a16207">555k transactions</text>
+        <text x="130" y="208" text-anchor="middle" font-size="14" font-weight="700" fill="#92400e">API HF Spaces</text>
+        <text x="130" y="228" text-anchor="middle" font-size="11" fill="#78350f">/current-transactions</text>
+        <text x="130" y="245" text-anchor="middle" font-size="11" fill="#78350f">JSON (Pandas split)</text>
+        <text x="130" y="262" text-anchor="middle" font-size="11" font-style="italic" fill="#a16207">streaming continu</text>
       </g>
 
       <!-- arrow from API to Producer -->
       <line x1="220" y1="230" x2="320" y2="230" stroke="#475569" stroke-width="2" marker-end="url(#arrow)"/>
-      <text x="240" y="220" font-size="11" fill="#64748b" font-style="italic">poll 6s</text>
+      <text x="240" y="220" font-size="11" fill="#64748b" font-style="italic">poll 3s</text>
 
       <!-- ============= INSIDE KAFKA CLUSTER ============= -->
 
@@ -102,7 +102,7 @@
       <g filter="url(#soft)">
         <rect x="320" y="190" width="170" height="90" rx="10" fill="#fef9c3" stroke="#ca8a04" stroke-width="2"/>
         <text x="405" y="216" text-anchor="middle" font-size="14" font-weight="700" fill="#713f12">Producer</text>
-        <text x="405" y="236" text-anchor="middle" font-size="11" fill="#854d0e">producer.py</text>
+        <text x="405" y="236" text-anchor="middle" font-size="11" fill="#854d0e">producer.py - poll 3s</text>
         <text x="405" y="252" text-anchor="middle" font-size="10" fill="#854d0e">Pydantic + SHA-256</text>
         <text x="405" y="268" text-anchor="middle" font-size="10" font-style="italic" fill="#a16207">RGPD compliant</text>
       </g>

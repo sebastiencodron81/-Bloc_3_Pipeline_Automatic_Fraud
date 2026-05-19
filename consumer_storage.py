@@ -1,29 +1,4 @@
-"""
-consumer_storage.py
-===================
-Consumer Kafka qui persiste TOUTES les predictions (fraudes et non-fraudes)
-dans PostgreSQL, table payments_gold.
-
-C'est cette table qui alimente :
-  - le rapport quotidien (cron 6h matin)
-  - la vue historique du dashboard Streamlit
-
-Schema cible :
-  CREATE TABLE payments_gold (
-      trans_num             VARCHAR PRIMARY KEY,
-      cc_num_hash           VARCHAR NOT NULL,
-      trans_date_trans_time TIMESTAMP NOT NULL,
-      merchant              VARCHAR,
-      category              VARCHAR,
-      amt                   NUMERIC,
-      state                 VARCHAR(2),
-      city                  VARCHAR,
-      is_fraud              SMALLINT,
-      score                 NUMERIC,
-      predicted_at          TIMESTAMP,
-      ingested_at           TIMESTAMP DEFAULT NOW()
-  );
-"""
+"""Consumer Kafka : persiste les predictions dans PostgreSQL."""
 
 from __future__ import annotations
 
@@ -33,22 +8,26 @@ import os
 
 from kafka import KafkaConsumer
 from sqlalchemy import (
-    Column, DateTime, Integer, Numeric, MetaData, String, Table,
-    create_engine, func,
+    Column,
+    DateTime,
+    Integer,
+    MetaData,
+    Numeric,
+    SmallInteger,
+    String,
+    Table,
+    create_engine,
+    func,
 )
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-
-# ----------------------------------------------------------------------
-# CONFIG
-# ----------------------------------------------------------------------
 
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "localhost:9092")
 TOPIC_PRED = os.getenv("TOPIC_PREDICTIONS", "fraud-predictions")
 GROUP_ID = os.getenv("GROUP_ID", "storage-consumer-group")
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql+psycopg2://fraud:fraud@localhost:5432/fraud"
+    "postgresql+psycopg2://fraud:fraud@localhost:5432/fraud",
 )
 
 logging.basicConfig(
@@ -59,13 +38,10 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
-# ----------------------------------------------------------------------
-# SCHEMA TABLE
-# ----------------------------------------------------------------------
-
 metadata = MetaData()
 payments_gold = Table(
-    "payments_gold", metadata,
+    "payments_gold",
+    metadata,
     Column("trans_num", String, primary_key=True),
     Column("cc_num_hash", String, nullable=False),
     Column("trans_date_trans_time", DateTime, nullable=False),
@@ -74,22 +50,19 @@ payments_gold = Table(
     Column("amt", Numeric),
     Column("state", String(2)),
     Column("city", String),
-    Column("is_fraud", Integer),
+    Column("is_fraud", SmallInteger),
     Column("score", Numeric),
+    Column("ground_truth", SmallInteger),
     Column("predicted_at", DateTime),
     Column("ingested_at", DateTime, server_default=func.now()),
 )
 
 
-# ----------------------------------------------------------------------
-# MAIN
-# ----------------------------------------------------------------------
-
 def main() -> None:
     log.info(f"Connexion Postgres : {DATABASE_URL}")
     engine = create_engine(DATABASE_URL, pool_pre_ping=True)
     metadata.create_all(engine)
-    log.info("Schema verifie/cree.")
+    log.info("Schema verifie.")
 
     log.info(f"Connexion Kafka {KAFKA_BOOTSTRAP} (group={GROUP_ID})")
     consumer = KafkaConsumer(
@@ -105,35 +78,29 @@ def main() -> None:
     try:
         for msg in consumer:
             payload = msg.value
-
-            # Upsert pour idempotence : meme trans_num ne cree pas de doublon
             stmt = pg_insert(payments_gold).values(**payload)
             stmt = stmt.on_conflict_do_update(
                 index_elements=["trans_num"],
                 set_={
                     "is_fraud": stmt.excluded.is_fraud,
                     "score": stmt.excluded.score,
+                    "ground_truth": stmt.excluded.ground_truth,
                     "predicted_at": stmt.excluded.predicted_at,
                 },
             )
-
-            # IMPORTANT : une transaction par message (commit immediat).
-            # Avant on avait un engine.begin() autour de toute la boucle
-            # -> aucune ligne visible avant que la boucle ne se termine.
             with engine.begin() as conn:
                 conn.execute(stmt)
-
             consumer.commit()
 
             n += 1
-            if n % 50 == 0:
+            if n % 25 == 0:
                 log.info(f"Persiste {n} transactions.")
 
     except KeyboardInterrupt:
         log.info("Arret demande.")
     finally:
         consumer.close()
-        log.info(f"Fermeture | total persiste={n}")
+        log.info(f"Fermeture | total={n}")
 
 
 if __name__ == "__main__":
