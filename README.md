@@ -13,6 +13,14 @@
 
 ---
 
+## 🎥 Démonstration vidéo
+
+▶️ **Voir la démo en action** : https://youtu.be/DLZHrRfsCUQ
+
+Vidéo courte de l'infrastructure en production : Kafka, scoring ML, dashboard temps réel, persistance PostgreSQL.
+
+---
+
 ## 📋 Présentation du projet
 
 Ce projet construit un **pipeline de données temps réel** capable de détecter la fraude sur les paiements par carte bancaire en moins de 5 secondes, et de produire un rapport quotidien automatisé.
