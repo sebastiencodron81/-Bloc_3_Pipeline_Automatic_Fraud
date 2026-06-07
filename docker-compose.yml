@@ -174,6 +174,37 @@ services:
     volumes:
       - ./:/app
 
+  # Batch quotidien : genere le rapport de la veille chaque jour a REPORT_HOUR
+  # (defaut 06:00, heure de Paris). Les JSON dates s'accumulent dans ./reports/
+  # -> preuve d'execution recurrente. Lancement manuel pour demo :
+  #   docker compose run --rm daily-report python daily_report.py --date 2026-06-06
+  daily-report:
+    build: .
+    command: >
+      bash -c "while true; do
+                 next=$$(date -d \"tomorrow $${REPORT_HOUR:-06:00}\" +%s);
+                 now=$$(date +%s);
+                 echo \"[daily-report] prochaine execution dans $$(( (next-now)/60 )) min\";
+                 sleep $$(( next - now ));
+                 python daily_report.py;
+               done"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      TZ: Europe/Paris
+      DATABASE_URL: postgresql+psycopg2://fraud:fraud@postgres:5432/fraud
+      REPORTS_DIR: /app/reports
+      REPORT_HOUR: ${REPORT_HOUR:-06:00}
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      REPORT_TO: ${REPORT_TO:-}
+    volumes:
+      - ./:/app
+    restart: unless-stopped
+
 volumes:
   pg-data:
   minio-data:
